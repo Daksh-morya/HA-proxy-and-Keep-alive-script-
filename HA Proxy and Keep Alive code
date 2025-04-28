@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# Keepalived + HAProxy Installer
+
+read -p "Enter your role (master/backup): " ROLE
+read -p "Enter the network interface (e.g. eth0): " IFACE
+
+# Set priority based on role
+if [ "$ROLE" == "master" ]; then
+    PRIORITY=100
+    STATE="MASTER"
+elif [ "$ROLE" == "backup" ]; then
+    PRIORITY=90
+    STATE="BACKUP"
+else
+    echo "Invalid role! Use 'master' or 'backup'."
+    exit 1
+fi
+
+VIP="192.168.2.200"
+AUTH_PASS="secret123"
+
+# Install packages
+echo "[+] Installing Keepalived and HAProxy..."
+sudo apt update
+sudo apt install keepalived haproxy -y
+
+# HAProxy Config
+echo "[+] Configuring HAProxy..."
+cat <<EOF | sudo tee /etc/haproxy/haproxy.cfg > /dev/null
+global
+    log /dev/log local0
+    maxconn 2048
+    daemon
+
+defaults
+    log     global
+    mode    http
+    option  httplog
+    timeout connect 5000
+    timeout client  50000
+    timeout server  50000
+
+frontend http_front
+    bind *:80
+    default_backend web_servers
+ 
+backend web_servers
+    balance roundrobin
+    server web1 <ip address>:80 check
+    server web2 <ip address>:80 check
+EOF
+
+# Keepalived Config
+echo "[+] Configuring Keepalived..."
+cat <<EOF | sudo tee /etc/keepalived/keepalived.conf > /dev/null
+vrrp_instance VI_1 {
+    state $STATE
+    interface $IFACE
+    virtual_router_id 51
+    priority $PRIORITY
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass $AUTH_PASS
+    }
+    virtual_ipaddress {
+        $VIP
+    }
+}
+EOF
+
+# Enable & start services
+echo "[+] Enabling and starting services..."
+sudo systemctl enable keepalived haproxy
+sudo systemctl restart keepalived haproxy
+
+echo "[✓] Setup Complete!"
